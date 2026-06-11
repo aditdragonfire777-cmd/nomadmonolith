@@ -1,0 +1,62 @@
+Running a Monolith on the HashiStack
+
+This guide explains how the generated monolith.nomad job specification manages a monolithic application using Nomad, Consul, and Vault.
+
+How the Core Architecture Works
+
+                        ┌──────────────────┐
+                        │  Nomad Server    │
+                        │ (The Orchestrator)
+                        └────────┬─────────┘
+                                 │ Schedules Job
+                                 ▼
+                     ┌──────────────────────┐
+                     │     Server Node      │
+                     │                      │
+ ┌──────────┐        │  ┌────────────────┐  │        ┌──────────┐
+ │  Consul  │◄───────┼──┤ Monolith Task  ├──┼───────►│  Vault   │
+ │ (Routing)│ Registers│└────────────────┘  │Fetches │(Secrets) │
+ └──────────┘        │                      │Secrets └──────────┘
+                     └──────────────────────┘
+
+
+1. Nomad (The Brains)
+
+Instead of manually copying code to a server and running it, you submit the monolith.nomad file to your Nomad cluster.
+
+Scheduling: Nomad looks at the resources block (demanding 2 CPUs and 4GB RAM) and scans your servers to find one that has these resources available.
+
+Self-Healing: If the physical server running your monolith dies, Nomad automatically schedules a brand-new instance of your monolith on another server in the cluster.
+
+2. Vault (The Guard)
+
+A common problem with monoliths is storing database credentials, API keys, and SSL certificates safely.
+
+Direct Retrieval: The vault and template blocks in the jobspec configure Nomad to authenticate with Vault.
+
+No hardcoded secrets: Nomad fetches the database username and password at the exact millisecond the application starts, writing them directly into the environment variables.
+
+Auto-Rotation: If security teams update the database password in Vault, Nomad automatically restarts the monolith (configured by change_mode = "restart") with the new password, ensuring zero-downtime secret rotations.
+
+3. Consul (The Switchboard)
+
+Because Nomad places your monolith on whichever server has the CPU/RAM room, the IP address and port of your application might change dynamically.
+
+Service Discovery: The service block registers the application with Consul under the name "monolith-service".
+
+Zero-Configuration Routing: Your load balancer (like Nginx, HAProxy, or Traefik) query Consul's DNS (e.g., monolith-service.service.consul) to find exactly where the monolith is currently running.
+
+Health Checks: Consul continuously pings /healthz. If your monolith locks up or runs out of database connections, Consul stops sending user traffic to it immediately while Nomad works on restarting it.
+
+Running this Job
+
+To run this configuration on your Nomad cluster, use the Nomad Command Line Interface (CLI):
+
+# 1. Format and validate the file to ensure no syntax errors
+nomad job validate monolith.nomad
+
+# 2. Plan the deployment to see what changes Nomad will make
+nomad job plan monolith.nomad
+
+# 3. Run/Deploy the job
+nomad job run monolith.nomad
